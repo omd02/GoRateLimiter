@@ -1,3 +1,4 @@
+![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)
 # GoRateLimiter: Highly Efficient Hybrid API Rate Limiter 🛡️
 
 GoRateLimiter is a high-performance, distributed API rate limiting solution built in Go and backed by Redis. It utilizes a sophisticated Hybrid Rate Limiting approach, combining the Token Bucket algorithm for instantaneous burst control with the Sliding Window Counter (SWC) for accurate long-term throughput management.
