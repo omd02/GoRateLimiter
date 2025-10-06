@@ -1,37 +1,76 @@
-package limiter
+package main
 
 import (
 	"context"
-	"time"
+	"fmt"
+	"log"
+	"net/http"
+
+	"GoRateLimiter/limiter"
 
 	"github.com/go-redis/redis/v8"
 )
 
-// Limiter struct holds config for both Token Bucket and SWC.
-type Limiter struct {
-	Client *redis.Client
-	Ctx    context.Context
+// Global Limiter Instance
+var rateLimiter *limiter.Limiter
 
-	// Token Bucket Configuration (for instantaneous burst control)
-	BucketCapacity int64         // Max burst size (N_burst)
-	RefillRate     time.Duration // Time to refill one token (e.g., 6s for 10/min)
+func main() {
+	ctx := context.Background()
 
-	// Sliding Window Counter Configuration (for long-term rate control)
-	SWCLimit  int64         // Max requests in window (N_swc)
-	SWCWindow time.Duration // Duration of the window (T_swc)
+	// 1. Initialize Redis Client
+	rdb := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
+
+	// Ping Redis to ensure the connection is working
+	_, err := rdb.Ping(ctx).Result()
+	if err != nil {
+		log.Fatalf("Could not connect to Redis: %v", err)
+	}
+	fmt.Println("Successfully connected to Redis.")
+
+	// 2. Initialize the Hybrid Rate Limiter
+	rateLimiter = limiter.NewLimiter(rdb, ctx)
+
+	// 3. Define Handlers and Middleware
+	// All incoming requests will go through the rateLimitMiddleware first.
+	http.Handle("/api/data", rateLimitMiddleware(http.HandlerFunc(dataHandler)))
+	http.Handle("/status", http.HandlerFunc(statusHandler))
+
+	// 4. Start the Server
+	fmt.Println("Server starting on :8080. Try hitting http://localhost:8080/api/data")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// NewLimiter is the constructor.
-func NewLimiter(rdb *redis.Client, ctx context.Context) *Limiter {
-	// Example configuration:
-	// Token Bucket: Max burst of 10 requests. Refills 1 token every 6 seconds (10/min rate).
-	// SWC: Limit of 100 requests per 60 minutes (3600 seconds).
-	return &Limiter{
-		Client:         rdb,
-		Ctx:            ctx,
-		BucketCapacity: 10,
-		RefillRate:     time.Second * 6, // 60s / 10 tokens = 6s per token
-		SWCLimit:       100,
-		SWCWindow:      time.Minute * 60,
-	}
+// rateLimitMiddleware is the critical function that wraps our core handlers.
+func rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. Get the identifier (e.g., IP address)
+		// For a simple example, we use the remote IP. In production, you'd use a user ID or API key.
+		identifier := r.RemoteAddr
+
+		// 2. Execute the hybrid rate limiter check
+		if rateLimiter.Allow(identifier) {
+			// Request is ALLOWED: Pass control to the next handler (dataHandler)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// 3. Request is DENIED: Respond with HTTP 429
+		w.WriteHeader(http.StatusTooManyRequests) // 429 Too Many Requests
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"error": "Rate limit exceeded. Try again later."}`)
+	})
+}
+
+// dataHandler is the core business logic handler, only reached if the request is allowed.
+func dataHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"message": "Welcome! Your request was processed."}`)
+}
+
+// statusHandler is for simple server health checks.
+func statusHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, "Server is healthy and rate limiting is active.")
 }
