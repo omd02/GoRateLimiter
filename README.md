@@ -89,25 +89,6 @@ type HealthSource interface {
     FetchMetrics() (HealthData, error)
 }
 
-🛠️ Configuration
-
-The rate limit parameters are defined in the limiter/limiter.go file within the NewLimiter constructor.
-Parameter	Algorithm	Default Value	Description
-BucketCapacity	Token Bucket	10	The maximum size of the instantaneous burst allowed.
-RefillRate	Token Bucket	6 * time.Second	The time it takes to replenish one token (10 tokens/minute).
-SWCLimit	SWC	100	The maximum number of requests allowed within the full SWCWindow.
-SWCWindow	SWC	60 * time.Minute	The duration of the rolling window (e.g., 1 hour).
-
-🧪 Testing
-
-You can test the hybrid functionality by sending requests to the API endpoint:
-
-Endpoint: http://localhost:8080/api/data
-
-    Test Burst (Token Bucket): Hit the endpoint 12 times quickly. The server should respond with 429 Too Many Requests (the Token Bucket is empty) after the 10th request.
-
-    Test Refill: Wait 7 seconds (longer than the 6-second RefillRate) and send 2 more requests. They should be allowed, demonstrating the Token Bucket refilling correctly.
-
 🤝 Contributing
 
 Contributions are welcome! Please feel free to open issues or submit pull requests.
