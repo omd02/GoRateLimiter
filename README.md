@@ -1,68 +1,93 @@
 ![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)
-# GoRateLimiter: Highly Efficient Hybrid API Rate Limiter 🛡️
+# Go Rate Limiter 🛡️
 
-GoRateLimiter is a high-performance, distributed API rate limiting solution built in Go and backed by Redis. It utilizes a sophisticated Hybrid Rate Limiting approach, combining the Token Bucket algorithm for instantaneous burst control with the Sliding Window Counter (SWC) for accurate long-term throughput management.
+**Go Rate Limiter** is a high-performance, self-adjusting traffic control module built in **Go**. Unlike traditional static rate limiters, this module dynamically adjusts the maximum allowed requests per second (RPS) based on the service's **real-time operational health** (CPU, Latency, Errors).
 
-🌟 Features
+This proactive throttling ensures maximum throughput during normal operation and guarantees **system stability** by actively shedding load before a service or its dependencies become overwhelmed.
 
-    Hybrid Approach: Implements a dual-check mechanism (Token Bucket + SWC) for robust defense against both sudden traffic spikes (DoS) and boundary-based abuse.
+## 🌟 Core Features
 
-    High Efficiency (O(1)): All critical checks run in constant time, utilizing simple Redis counters and timestamps for minimal latency.
+* **Dynamic Adaptation:** The core throttling factor is updated every few seconds based on live health metrics.
+* **Decoupled Health Source (Adapter Pattern):** Uses the `HealthSource` interface, allowing easy swapping between the **Prometheus Source** (Production) and the **Simulated Source** (Testing).
+* **High Performance:** Built on the concurrency-safe `golang.org/x/time/rate` package for efficient Token Bucket enforcement.
+* **Built for Production:** Integrates directly with **Prometheus**, the industry-standard monitoring solution.
+* **Extensible Architecture:** Designed for future integration of **per-client adaptive limits** via API keys or JWTs.
 
-    Concurrency Safe: Built for distributed environments, leveraging the atomic operations of Redis to ensure thread safety across multiple application instances.
+***
 
-    Go Middleware: Easy integration into any standard Go HTTP server.
+## 🚀 Getting Started
 
-    Minimal Memory Footprint: Avoids the memory overhead of the traditional Sliding Window Log by using only two integer counters per user/window.
+### Prerequisites
 
-📦 Getting Started
+You need the following installed:
 
-Prerequisites
+* **Go (1.20+):** For running the application.
+* **Prometheus:** A running Prometheus server accessible to your application (required for production mode).
 
-You need the following installed on your machine:
+### Installation & Setup
 
-    Go (1.18+): For running the application.
+1.  **Clone the Repository:**
+    ```bash
+    git clone [Your Repository URL Here]
+    cd go-adaptive-limiter
+    ```
+2.  **Resolve Dependencies:**
+    ```bash
+    go mod tidy
+    ```
+3.  **Configure Prometheus URL:**
+    Open `main.go` and set the correct endpoint for your Prometheus server:
+    ```go
+    const PROMETHEUS_URL = "http://your-prometheus-server:9090" 
+    ```
+4.  **Run the Application (Production Mode):**
+    ```bash
+    go run .
+    ```
+    The server will start on port `8080`, and the monitor will immediately begin querying Prometheus to set the initial adaptive rate limit.
 
-    Redis (6.0+): The required persistent store for all rate limit counters.
+***
 
-Installation & Setup
+## ⚙️ Core Architecture
 
-    Clone the repository:
-    Bash
+The system is cleanly separated into three core components, emphasizing modularity and testability through the **Adapter Pattern**.
 
-git clone https://github.com/YourUsername/GoRateLimiter.git
-cd GoRateLimiter
+| Component | Package | Responsibility |
+| :--- | :--- | :--- |
+| **Adaptive Limiter** | `pkg/adaptive` | The central throttling mechanism. Enforces the limit calculated by the Monitor using the Token Bucket algorithm. |
+| **Health Monitor** | `pkg/adaptive` | The decision engine. Periodically calls the `HealthSource`, runs the risk assessment formula, and applies the resulting **Throttling Factor** to the Limiter. |
+| **Health Source** | `pkg/health` | **Adapter** interface for metric retrieval. Implemented by `real.go` (Prometheus) and `simulated.go` (Test). |
 
-Start Redis:
-Ensure your Redis server is running, typically on localhost:6379. (If using Docker: docker run --name rate-redis -p 6379:6379 -d redis).
+### The Adaptive Logic
 
-Run the Go application:
-Bash
+The Monitor calculates a **Throttling Factor** (a floating point value between 0.1 and 1.0) based on three key health metrics:
 
-    go run main.go
+1.  **CPU Utilization**
+2.  **P95 Request Latency**
+3.  **5xx Error Rate**
 
-    The server will start on port 8080.
+The formula is designed to quickly reduce the allowed RPS when *any* metric exceeds its healthy threshold. This ensures the applied rate limit is always sufficient to maintain a healthy service state.
 
-⚙️ How It Works (The Hybrid Logic)
+$$
+\text{New RPS} = \text{BaseRPS} \times \text{Factor}
+$$
 
-The core logic is implemented in the limiter/limiter.go file, where the Allow(identifier) method performs two mandatory, sequential checks:
+### Health Source Decoupling
 
-1. Token Bucket Check (Burst Control)
+The module achieves production readiness by isolating the data source behind the `HealthSource` interface:
 
-    Goal: Limits the maximum number of requests a user can send in a very short period.
+```go
+// pkg/health/interface.go
+type HealthData struct {
+    CPUUtilization float64 // 0-100%
+    P95LatencyMs   float64 // Milliseconds
+    ErrorRate      float64 // 0-100%
+}
 
-    Mechanism: When a request arrives, the system calculates how many tokens have refilled since the last check. If the current token count is less than 1, the request is DENIED instantly, preventing an overwhelming burst.
-
-2. Sliding Window Counter (SWC) Check (Sustained Rate Control)
-
-    Goal: Ensures the user's request rate is evenly distributed over a long period (e.g., 60 minutes) and prevents the fixed-window "boundary effect."
-
-    Mechanism: The system fetches the counter for the Current Window and the Previous Window, then calculates a precise O(1) estimate:
-    Estimated Count=(Prev. Count×Overlap Fraction)+Curr. Count
-
-    If the Estimated Count exceeds the long-term limit, the request is DENIED.
-
-A request is only ALLOWED if it PASSES BOTH the Token Bucket and the SWC check.
+type HealthSource interface {
+    // FetchMetrics retrieves the latest status metrics from the source.
+    FetchMetrics() (HealthData, error)
+}
 
 🛠️ Configuration
 
